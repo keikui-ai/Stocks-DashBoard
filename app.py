@@ -30,22 +30,35 @@ def fetch_price_data(symbol):
         return None
 
     url = "https://www.alphavantage.co/query"
-    params = {"function": "TIME_SERIES_DAILY", "symbol": symbol, "outputsize": "full", "apikey": api_key}
+    params = {
+        "function": "TIME_SERIES_DAILY",
+        "symbol": symbol,
+        "outputsize": "full",
+        "apikey": api_key
+    }
     try:
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        if "Time Series (Daily)" not in 
+        
+        # Check if API returned valid data
+        if "Time Series (Daily)" not in data:
+            st.warning(f"No price data found for {symbol}")
             return None
+            
         df = pd.DataFrame(data["Time Series (Daily)"]).T
         df.index = pd.to_datetime(df.index)
         df = df.astype(float)
         df.rename(columns={
-            "1. open": "Open", "2. high": "High", "3. low": "Low", "4. close": "Close", "5. volume": "Volume"
+            "1. open": "Open",
+            "2. high": "High",
+            "3. low": "Low",
+            "4. close": "Close",
+            "5. volume": "Volume"
         }, inplace=True)
         df.sort_index(inplace=True)
         return df
     except Exception as e:
-        st.error(f"Price data error for {symbol}: {e}")
+        st.error(f"Alpha Vantage price error for {symbol}: {e}")
         return None
 
 @st.cache_data(ttl=7200)
