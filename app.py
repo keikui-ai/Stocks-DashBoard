@@ -1,12 +1,9 @@
-# app.py
 import streamlit as st
 import yfinance as yf
-import requests
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import talib
 from datetime import datetime, timedelta
 import json
 from openai import OpenAI
@@ -19,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -33,12 +30,6 @@ st.markdown("""
         padding: 1rem;
         border-radius: 10px;
         margin: 0.5rem 0;
-    }
-    .positive {
-        color: #00cc96;
-    }
-    .negative {
-        color: #ef553b;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -63,30 +54,56 @@ class StockAnalyzer:
             st.error(f"Error fetching data for {symbol}: {e}")
             return None
 
+    def calculate_rsi(self, prices, window=14):
+        """Calculate RSI without TA-Lib"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def calculate_macd(self, prices, fast=12, slow=26, signal=9):
+        """Calculate MACD without TA-Lib"""
+        exp1 = prices.ewm(span=fast, adjust=False).mean()
+        exp2 = prices.ewm(span=slow, adjust=False).mean()
+        macd = exp1 - exp2
+        macd_signal = macd.ewm(span=signal, adjust=False).mean()
+        macd_hist = macd - macd_signal
+        return macd, macd_signal, macd_hist
+
+    def calculate_bollinger_bands(self, prices, window=20, num_std=2):
+        """Calculate Bollinger Bands without TA-Lib"""
+        rolling_mean = prices.rolling(window=window).mean()
+        rolling_std = prices.rolling(window=window).std()
+        upper_band = rolling_mean + (rolling_std * num_std)
+        lower_band = rolling_mean - (rolling_std * num_std)
+        return upper_band, rolling_mean, lower_band
+
     def calculate_technical_indicators(self, df):
-        """Calculate technical indicators"""
+        """Calculate technical indicators without TA-Lib"""
         if df.empty:
-            return {}
+            return {}, df
         
         # RSI
-        df['rsi'] = talib.RSI(df['Close'], timeperiod=14)
+        df['rsi'] = self.calculate_rsi(df['Close'])
         
         # MACD
-        macd, macd_signal, macd_hist = talib.MACD(df['Close'])
+        macd, macd_signal, macd_hist = self.calculate_macd(df['Close'])
         df['macd'] = macd
         df['macd_signal'] = macd_signal
         df['macd_hist'] = macd_hist
         
         # Bollinger Bands
-        upper, middle, lower = talib.BBANDS(df['Close'], timeperiod=20)
-        df['bb_upper'] = upper
-        df['bb_middle'] = middle
-        df['bb_lower'] = lower
+        bb_upper, bb_middle, bb_lower = self.calculate_bollinger_bands(df['Close'])
+        df['bb_upper'] = bb_upper
+        df['bb_middle'] = bb_middle
+        df['bb_lower'] = bb_lower
         
         # Moving averages
-        df['sma_20'] = talib.SMA(df['Close'], timeperiod=20)
-        df['sma_50'] = talib.SMA(df['Close'], timeperiod=50)
-        df['ema_12'] = talib.EMA(df['Close'], timeperiod=12)
+        df['sma_20'] = df['Close'].rolling(window=20).mean()
+        df['sma_50'] = df['Close'].rolling(window=50).mean()
+        df['ema_12'] = df['Close'].ewm(span=12, adjust=False).mean()
         
         # Volatility
         df['volatility'] = df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
@@ -99,13 +116,13 @@ class StockAnalyzer:
         latest = df.iloc[-1]
         
         signals = {
-            'rsi': latest['rsi'],
+            'rsi': latest['rsi'] if not pd.isna(latest['rsi']) else 50,
             'rsi_signal': 'OVERSOLD' if latest['rsi'] < 30 else 'OVERBOUGHT' if latest['rsi'] > 70 else 'NEUTRAL',
             'macd_signal': 'BULLISH' if latest['macd'] > latest['macd_signal'] else 'BEARISH',
             'trend': 'BULLISH' if latest['sma_20'] > latest['sma_50'] else 'BEARISH',
             'bb_signal': 'OVERBOUGHT' if latest['Close'] > latest['bb_upper'] else 'OVERSOLD' if latest['Close'] < latest['bb_lower'] else 'NEUTRAL',
-            'volatility': latest['volatility'],
-            'momentum': (latest['momentum_1m'] * 0.4 + latest['momentum_3m'] * 0.35 + latest['momentum_6m'] * 0.25)
+            'volatility': latest['volatility'] if not pd.isna(latest['volatility']) else 0.3,
+            'momentum': (latest['momentum_1m'] * 0.4 + latest['momentum_3m'] * 0.35 + latest['momentum_6m'] * 0.25) if not pd.isna(latest['momentum_1m']) else 0
         }
         
         return signals, df
@@ -132,14 +149,7 @@ class StockAnalyzer:
             - Momentum: {technical_data['momentum']:.3f}
             - Bollinger Band: {technical_data['bb_signal']}
             
-            Please provide a concise analysis focusing on:
-            1. Risk assessment (1-10 score)
-            2. Return potential (percentage)
-            3. Recommended allocation (0-100%)
-            4. Key risk factors
-            5. Risk mitigation strategies
-            
-            Format as JSON with: risk_score, return_potential, allocation, risks, strategies.
+            Please provide a concise analysis focusing on risk-adjusted returns.
             """
             
             response = client.chat.completions.create(
@@ -149,26 +159,15 @@ class StockAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=800
             )
             
             analysis_text = response.choices[0].message.content
-            return self.parse_ai_analysis(analysis_text)
+            return {'analysis': analysis_text}
             
         except Exception as e:
             st.error(f"DeepSeek API error: {e}")
             return self.get_fallback_analysis(technical_data)
-
-    def parse_ai_analysis(self, analysis_text):
-        """Parse AI analysis response"""
-        try:
-            if '```json' in analysis_text:
-                json_str = analysis_text.split('```json')[1].split('```')[0].strip()
-                return json.loads(json_str)
-            else:
-                return {'analysis': analysis_text}
-        except:
-            return {'analysis': analysis_text}
 
     def get_fallback_analysis(self, technical_data):
         """Fallback analysis without AI"""
@@ -180,7 +179,8 @@ class StockAnalyzer:
             'return_potential': return_potential,
             'allocation': max(min(return_potential / max(risk_score, 1) * 10, 20), 5),
             'risks': ['Market volatility', 'Sector-specific risks'],
-            'strategies': ['Diversification', 'Stop-loss orders']
+            'strategies': ['Diversification', 'Stop-loss orders'],
+            'analysis': f"Based on technical analysis: RSI {technical_data['rsi']:.1f}, {technical_data['trend']} trend, volatility {technical_data['volatility']:.1%}."
         }
 
     def optimize_portfolio(self, stocks_analysis):
@@ -188,7 +188,6 @@ class StockAnalyzer:
         if len(stocks_analysis) < 2:
             return None
         
-        # Calculate weights based on risk-adjusted returns
         weights = {}
         total_score = 0
         
@@ -197,23 +196,20 @@ class StockAnalyzer:
             risk_score = ai_analysis.get('risk_score', 5)
             return_potential = ai_analysis.get('return_potential', 10)
             
-            # Risk-adjusted score (higher is better)
             score = return_potential / max(risk_score, 1)
             weights[symbol] = score
             total_score += score
         
-        # Normalize weights
         if total_score > 0:
             weights = {k: (v / total_score) * 100 for k, v in weights.items()}
         else:
-            # Equal weighting if no scores
             equal_weight = 100 / len(stocks_analysis)
             weights = {k: equal_weight for k in stocks_analysis.keys()}
         
         return weights
 
 def create_price_chart(df, symbol):
-    """Create interactive price chart with technical indicators"""
+    """Create interactive price chart"""
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
@@ -237,27 +233,6 @@ def create_price_chart(df, symbol):
             row=1, col=1
         )
     
-    if 'sma_50' in df.columns:
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['sma_50'], name='SMA 50',
-                      line=dict(color='red', dash='dash')),
-            row=1, col=1
-        )
-    
-    # Bollinger Bands
-    if all(col in df.columns for col in ['bb_upper', 'bb_middle', 'bb_lower']):
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['bb_upper'], name='BB Upper',
-                      line=dict(color='gray', dash='dot'), showlegend=False),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['bb_lower'], name='BB Lower',
-                      line=dict(color='gray', dash='dot'), showlegend=False,
-                      fill='tonexty', fillcolor='rgba(128,128,128,0.1)'),
-            row=1, col=1
-        )
-    
     # Volume
     colors = ['red' if row['Open'] > row['Close'] else 'green' 
               for _, row in df.iterrows()]
@@ -268,9 +243,7 @@ def create_price_chart(df, symbol):
         row=2, col=1
     )
     
-    fig.update_layout(height=600, showlegend=True,
-                     template="plotly_white")
-    
+    fig.update_layout(height=500, showlegend=True, template="plotly_white")
     return fig
 
 def create_technical_chart(df):
@@ -289,7 +262,6 @@ def create_technical_chart(df):
                       line=dict(color='purple')),
             row=1, col=1
         )
-        # Overbought/Oversold lines
         fig.add_hline(y=70, line_dash="dash", line_color="red", row=1, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="green", row=1, col=1)
     
@@ -306,9 +278,7 @@ def create_technical_chart(df):
             row=2, col=1
         )
     
-    fig.update_layout(height=400, showlegend=True,
-                     template="plotly_white")
-    
+    fig.update_layout(height=400, showlegend=True, template="plotly_white")
     return fig
 
 def main():
@@ -327,27 +297,26 @@ def main():
     # API Key input
     deepseek_key = st.sidebar.text_input("DeepSeek API Key (optional)", 
                                         type="password",
-                                        help="Get your API key from https://platform.deepseek.com/")
+                                        help="Get from https://platform.deepseek.com/")
     if deepseek_key:
         st.session_state.deepseek_api_key = deepseek_key
     
     # Stock selection
     st.sidebar.subheader("Stock Selection")
-    default_symbols = "AAPL, MSFT, GOOGL, TSLA, NVDA, AMZN"
+    default_symbols = "AAPL, MSFT, GOOGL, TSLA"
     symbols_input = st.sidebar.text_area("Stock Symbols (comma separated)", 
-                                        value=default_symbols,
-                                        help="Enter stock symbols separated by commas")
+                                        value=default_symbols)
     
     symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
     
     # Analysis period
     period = st.sidebar.selectbox("Analysis Period", 
-                                 ["3mo", "6mo", "1y", "2y", "5y"], 
+                                 ["3mo", "6mo", "1y", "2y"], 
                                  index=2)
     
     # Analyze button
     if st.sidebar.button("🚀 Analyze Stocks", use_container_width=True):
-        with st.spinner("Analyzing stocks... This may take a few moments."):
+        with st.spinner("Analyzing stocks..."):
             st.session_state.analysis_results = {}
             
             progress_bar = st.progress(0)
@@ -357,6 +326,7 @@ def main():
                 # Get stock data
                 stock_data = st.session_state.analyzer.get_stock_data(symbol, period)
                 if stock_data is None:
+                    st.warning(f"Could not fetch data for {symbol}")
                     continue
                 
                 # Calculate technical indicators
@@ -387,7 +357,7 @@ def main():
         display_welcome()
 
 def display_welcome():
-    """Display welcome message and instructions"""
+    """Display welcome message"""
     st.markdown("""
     ## Welcome to the AI Stock Analysis Dashboard! 🎯
     
@@ -403,12 +373,6 @@ def display_welcome():
     2. Add stock symbols you want to analyze
     3. Click "Analyze Stocks"
     4. View detailed analysis and recommendations
-    
-    ### Example symbols to try:
-    - Technology: AAPL, MSFT, GOOGL, NVDA
-    - E-commerce: AMZN, SHOP
-    - EVs: TSLA, NIO
-    - Finance: JPM, V, MA
     """)
 
 def display_results(analysis_results, symbols):
@@ -427,8 +391,7 @@ def display_results(analysis_results, symbols):
                                        key=lambda x: x[1], reverse=True):
                 st.metric(
                     label=symbol,
-                    value=f"{weight:.1f}%",
-                    help=f"Recommended portfolio allocation for {symbol}"
+                    value=f"{weight:.1f}%"
                 )
         
         with col2:
@@ -436,8 +399,7 @@ def display_results(analysis_results, symbols):
             fig = go.Figure(data=[go.Pie(
                 labels=list(portfolio_weights.keys()),
                 values=list(portfolio_weights.values()),
-                hole=.3,
-                textinfo='label+percent'
+                hole=.3
             )])
             fig.update_layout(title="Portfolio Allocation")
             st.plotly_chart(fig, use_container_width=True)
@@ -455,51 +417,20 @@ def display_results(analysis_results, symbols):
         
         st.markdown(f"## {symbol}")
         
-        # Key metrics row
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # Key metrics
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            delta_color = "normal"
-            if technical['rsi_signal'] == 'OVERSOLD':
-                delta_color = "inverse"
-            elif technical['rsi_signal'] == 'OVERBOUGHT':
-                delta_color = "off"
-                
-            st.metric(
-                "RSI",
-                f"{technical['rsi']:.1f}",
-                technical['rsi_signal'],
-                delta_color=delta_color
-            )
+            st.metric("RSI", f"{technical['rsi']:.1f}", technical['rsi_signal'])
         
         with col2:
-            st.metric(
-                "MACD Signal",
-                technical['macd_signal'],
-                help="MACD trading signal"
-            )
+            st.metric("MACD Signal", technical['macd_signal'])
         
         with col3:
-            st.metric(
-                "Trend",
-                technical['trend'],
-                help="Short-term vs long-term trend"
-            )
+            st.metric("Trend", technical['trend'])
         
         with col4:
-            st.metric(
-                "Volatility",
-                f"{(technical['volatility'] * 100):.1f}%",
-                help="Annualized volatility"
-            )
-        
-        with col5:
-            momentum_pct = technical['momentum'] * 100
-            st.metric(
-                "Momentum",
-                f"{momentum_pct:.1f}%",
-                help="Weighted momentum score"
-            )
+            st.metric("Volatility", f"{(technical['volatility'] * 100):.1f}%")
         
         # Charts
         col_chart1, col_chart2 = st.columns(2)
@@ -513,54 +444,8 @@ def display_results(analysis_results, symbols):
             st.plotly_chart(tech_chart, use_container_width=True)
         
         # AI Analysis
-        st.subheader("🤖 AI Risk-Return Analysis")
-        
-        if 'analysis' in ai_analysis:
-            # Raw analysis text
-            st.info(ai_analysis['analysis'])
-        else:
-            # Structured analysis
-            col_ai1, col_ai2, col_ai3 = st.columns(3)
-            
-            with col_ai1:
-                risk_score = ai_analysis.get('risk_score', 5)
-                st.metric(
-                    "Risk Score",
-                    f"{risk_score}/10",
-                    help="Lower is better"
-                )
-                st.progress(risk_score / 10)
-            
-            with col_ai2:
-                return_potential = ai_analysis.get('return_potential', 10)
-                st.metric(
-                    "Return Potential",
-                    f"{return_potential:.1f}%",
-                    help="Expected return potential"
-                )
-            
-            with col_ai3:
-                allocation = ai_analysis.get('allocation', 10)
-                st.metric(
-                    "Recommended Allocation",
-                    f"{allocation:.1f}%",
-                    help="Suggested portfolio allocation"
-                )
-            
-            # Risks and strategies
-            col_risk, col_strat = st.columns(2)
-            
-            with col_risk:
-                st.write("**Key Risks:**")
-                risks = ai_analysis.get('risks', ['Not specified'])
-                for risk in risks:
-                    st.write(f"• {risk}")
-            
-            with col_strat:
-                st.write("**Mitigation Strategies:**")
-                strategies = ai_analysis.get('strategies', ['Not specified'])
-                for strategy in strategies:
-                    st.write(f"• {strategy}")
+        st.subheader("🤖 AI Analysis")
+        st.info(ai_analysis.get('analysis', 'Analysis not available'))
         
         st.markdown("---")
 
