@@ -1,9 +1,9 @@
-# requirements.txt
+# Updated requirements.txt for Streamlit Cloud compatibility
 streamlit==1.28.0
 yfinance==0.2.18
 pandas==2.1.3
-numpy==1.24.3
+numpy==1.26.4
 plotly==5.15.0
-talib-binary==0.4.28
 openai==1.3.0
 requests==2.31.0
+# Remove talib-binary - we'll use alternative technical analysis
