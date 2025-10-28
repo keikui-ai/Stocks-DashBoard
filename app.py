@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 # Page configuration
 st.set_page_config(
-    page_title="Stock Analysis Dashboard",
+    page_title="AI Stock Analysis Dashboard",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -46,6 +46,7 @@ class StockAnalyzer:
             hist_data = ticker.history(period=period)
             
             if hist_data.empty:
+                st.error(f"No data found for {symbol}")
                 return None
                 
             return {
@@ -62,12 +63,16 @@ class StockAnalyzer:
         """Calculate RSI"""
         try:
             delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-            rs = gain / loss
+            gain = (delta.where(delta > 0, 0)).fillna(0)
+            loss = (-delta.where(delta < 0, 0)).fillna(0)
+            
+            avg_gain = gain.rolling(window=window).mean()
+            avg_loss = loss.rolling(window=window).mean()
+            
+            rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
             return rsi
-        except:
+        except Exception as e:
             return pd.Series([50] * len(prices), index=prices.index)
 
     def calculate_macd(self, prices, fast=12, slow=26, signal=9):
@@ -100,7 +105,7 @@ class StockAnalyzer:
             return {}, df
         
         try:
-            # Calculate returns and volatility first
+            # Calculate returns and volatility
             df['returns'] = df['Close'].pct_change()
             df['volatility'] = df['returns'].rolling(window=20).std() * np.sqrt(252)
             
@@ -122,18 +127,31 @@ class StockAnalyzer:
             df['sma_20'] = df['Close'].rolling(window=20).mean()
             df['sma_50'] = df['Close'].rolling(window=50).mean()
             
+            # Get latest values safely
             latest = df.iloc[-1]
             
-            # Handle NaN values safely
-            rsi_value = 50 if pd.isna(latest['rsi']) else latest['rsi']
-            volatility_value = 0.3 if pd.isna(latest['volatility']) else latest['volatility']
+            rsi_value = latest['rsi'] if not pd.isna(latest['rsi']) else 50
+            volatility_value = latest['volatility'] if not pd.isna(latest['volatility']) else 0.3
+            
+            # Determine signals
+            macd_signal = 'BULLISH' if latest['macd'] > latest['macd_signal'] else 'BEARISH'
+            
+            if pd.notna(latest['sma_20']) and pd.notna(latest['sma_50']):
+                trend = 'BULLISH' if latest['sma_20'] > latest['sma_50'] else 'BEARISH'
+            else:
+                trend = 'NEUTRAL'
+                
+            if pd.notna(latest['bb_upper']) and pd.notna(latest['bb_lower']):
+                bb_signal = 'OVERBOUGHT' if latest['Close'] > latest['bb_upper'] else 'OVERSOLD' if latest['Close'] < latest['bb_lower'] else 'NEUTRAL'
+            else:
+                bb_signal = 'NEUTRAL'
             
             signals = {
                 'rsi': rsi_value,
                 'rsi_signal': 'OVERSOLD' if rsi_value < 30 else 'OVERBOUGHT' if rsi_value > 70 else 'NEUTRAL',
-                'macd_signal': 'BULLISH' if latest['macd'] > latest['macd_signal'] else 'BEARISH',
-                'trend': 'BULLISH' if latest['sma_20'] > latest['sma_50'] else 'BEARISH' if pd.notna(latest['sma_20']) and pd.notna(latest['sma_50']) else 'NEUTRAL',
-                'bb_signal': 'OVERBOUGHT' if latest['Close'] > latest['bb_upper'] else 'OVERSOLD' if latest['Close'] < latest['bb_lower'] else 'NEUTRAL',
+                'macd_signal': macd_signal,
+                'trend': trend,
+                'bb_signal': bb_signal,
                 'volatility': volatility_value,
                 'current_price': latest['Close'],
                 'price_change': ((latest['Close'] - df['Close'].iloc[-2]) / df['Close'].iloc[-2] * 100) if len(df) > 1 else 0
@@ -156,66 +174,79 @@ class StockAnalyzer:
             }
             return basic_signals, df
 
-    def analyze_stock(self, symbol, technical_data, price_data):
+    def analyze_stock(self, symbol, technical_data):
         """Analyze stock and provide recommendations"""
-        risk_score = min(technical_data['volatility'] * 15, 10)
-        
-        # Calculate return potential based on momentum and trend
-        trend_score = 1 if technical_data['trend'] == 'BULLISH' else -1 if technical_data['trend'] == 'BEARISH' else 0
-        rsi_score = 0.5 if technical_data['rsi_signal'] == 'NEUTRAL' else 0.2 if technical_data['rsi_signal'] == 'OVERSOLD' else -0.2
-        macd_score = 0.3 if technical_data['macd_signal'] == 'BULLISH' else -0.3
-        
-        return_potential = max(min((trend_score + rsi_score + macd_score) * 20, 25), -10)
-        
-        analysis = f"""
-**Analysis for {symbol}**
+        try:
+            risk_score = min(technical_data['volatility'] * 15, 10)
+            
+            # Calculate return potential based on multiple factors
+            trend_score = 1 if technical_data['trend'] == 'BULLISH' else -1 if technical_data['trend'] == 'BEARISH' else 0
+            rsi_score = 0.5 if technical_data['rsi_signal'] == 'NEUTRAL' else 0.8 if technical_data['rsi_signal'] == 'OVERSOLD' else -0.2
+            macd_score = 0.3 if technical_data['macd_signal'] == 'BULLISH' else -0.3
+            
+            return_potential = max(min((trend_score + rsi_score + macd_score) * 25, 30), -15)
+            
+            analysis = f"""
+**📊 Analysis for {symbol}**
 
-**Current Price:** ${technical_data['current_price']:.2f}
-**Price Change:** {technical_data['price_change']:+.2f}%
+**💰 Price:** ${technical_data['current_price']:.2f} ({technical_data['price_change']:+.2f}%)
 
-**Technical Indicators:**
-- RSI: {technical_data['rsi']:.1f} ({technical_data['rsi_signal']})
-- MACD: {technical_data['macd_signal']}
-- Trend: {technical_data['trend']}
-- Volatility: {technical_data['volatility']:.1%}
+**🔍 Technical Indicators:**
+- **RSI:** {technical_data['rsi']:.1f} ({technical_data['rsi_signal']})
+- **MACD:** {technical_data['macd_signal']}
+- **Trend:** {technical_data['trend']}
+- **Volatility:** {technical_data['volatility']:.1%}
+- **Bollinger Bands:** {technical_data['bb_signal']}
 
-**Risk Assessment:** {risk_score:.1f}/10
-**Return Potential:** {return_potential:.1f}%
+**📈 Risk Assessment:** {risk_score:.1f}/10
+**🎯 Return Potential:** {return_potential:.1f}%
 
-**Recommendation:** {'Consider for investment' if return_potential > 5 and risk_score < 7 else 'Monitor for entry points' if return_potential > 0 else 'Wait for better conditions'}
+**💡 Recommendation:** {'Consider for investment' if return_potential > 8 and risk_score < 6 else 'Good potential, monitor closely' if return_potential > 3 else 'Wait for better entry point'}
 """
-        return {
-            'analysis': analysis,
-            'risk_score': risk_score,
-            'return_potential': return_potential,
-            'allocation': max(min(return_potential / max(risk_score, 1) * 8, 12), 2)
-        }
+            return {
+                'analysis': analysis,
+                'risk_score': risk_score,
+                'return_potential': return_potential,
+                'allocation': max(min(return_potential / max(risk_score, 1) * 6, 15), 2)
+            }
+        except Exception as e:
+            st.error(f"Error in stock analysis: {str(e)}")
+            return {
+                'analysis': f"Basic analysis for {symbol}: Current price ${technical_data.get('current_price', 0):.2f}",
+                'risk_score': 5,
+                'return_potential': 5,
+                'allocation': 5
+            }
 
     def optimize_portfolio(self, stocks_analysis):
         """Simple portfolio optimization"""
         if len(stocks_analysis) < 2:
             return None
         
-        weights = {}
-        total_score = 0
-        
-        for symbol, data in stocks_analysis.items():
-            analysis = data.get('analysis', {})
-            risk_score = analysis.get('risk_score', 5)
-            return_potential = analysis.get('return_potential', 5)
+        try:
+            weights = {}
+            total_score = 0
             
-            # Risk-adjusted score (Sharpe-like)
-            score = (return_potential + 5) / max(risk_score, 1)  # Add 5 to avoid negative scores
-            weights[symbol] = score
-            total_score += score
-        
-        if total_score > 0:
-            weights = {k: (v / total_score) * 100 for k, v in weights.items()}
-        else:
-            equal_weight = 100 / len(stocks_analysis)
-            weights = {k: equal_weight for k in stocks_analysis.keys()}
-        
-        return weights
+            for symbol, data in stocks_analysis.items():
+                analysis = data.get('analysis', {})
+                risk_score = analysis.get('risk_score', 5)
+                return_potential = analysis.get('return_potential', 5)
+                
+                # Risk-adjusted score (Sharpe-like)
+                score = (return_potential + 5) / max(risk_score, 1)  # Add 5 to avoid negative scores
+                weights[symbol] = score
+                total_score += score
+            
+            if total_score > 0:
+                weights = {k: (v / total_score) * 100 for k, v in weights.items()}
+            else:
+                equal_weight = 100 / len(stocks_analysis)
+                weights = {k: equal_weight for k in stocks_analysis.keys()}
+            
+            return weights
+        except Exception as e:
+            st.error(f"Error in portfolio optimization: {str(e)}")
+            return None
 
 def create_price_chart(df, symbol):
     """Create interactive price chart"""
@@ -274,7 +305,7 @@ def create_price_chart(df, symbol):
         )
         return fig
     except Exception as e:
-        # Return empty figure if error
+        st.error(f"Error creating price chart: {str(e)}")
         return go.Figure()
 
 def create_technical_chart(df, symbol):
@@ -316,10 +347,11 @@ def create_technical_chart(df, symbol):
         fig.update_layout(height=400, showlegend=True, template="plotly_white")
         return fig
     except Exception as e:
+        st.error(f"Error creating technical chart: {str(e)}")
         return go.Figure()
 
 def main():
-    st.markdown('<h1 class="main-header">📈 Stock Analysis Dashboard</h1>', 
+    st.markdown('<h1 class="main-header">🤖 AI Stock Analysis Dashboard</h1>', 
                 unsafe_allow_html=True)
     
     # Initialize session state
@@ -329,14 +361,16 @@ def main():
         st.session_state.analysis_results = {}
     
     # Sidebar
-    st.sidebar.header("Stock Selection")
+    st.sidebar.header("Configuration")
     
     # Stock selection
-    default_symbols = "AAPL, MSFT, GOOG, TSLA"
+    st.sidebar.subheader("Stock Selection")
+    default_symbols = "AAPL, MSFT, GOOGL, TSLA, AMZN, NFLX"
     symbols_input = st.sidebar.text_area(
         "Stock Symbols (comma separated)", 
         value=default_symbols,
-        height=80
+        height=100,
+        help="Enter stock symbols separated by commas"
     )
     
     symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
@@ -349,17 +383,18 @@ def main():
     )
     
     # Analyze button
-    if st.sidebar.button("Analyze Stocks", use_container_width=True):
-        with st.spinner("Analyzing stocks..."):
+    if st.sidebar.button("🚀 Analyze Stocks", type="primary", use_container_width=True):
+        with st.spinner("Analyzing stocks... This may take a few moments."):
             st.session_state.analysis_results = {}
             
             progress_bar = st.progress(0)
             for i, symbol in enumerate(symbols):
                 try:
+                    st.write(f"📊 Analyzing {symbol}...")
+                    
                     # Get stock data
                     stock_data = st.session_state.analyzer.get_stock_data(symbol, period)
                     if stock_data is None:
-                        st.warning(f"Could not fetch data for {symbol}")
                         continue
                     
                     # Calculate technical indicators
@@ -368,9 +403,7 @@ def main():
                     )
                     
                     # Analyze stock
-                    analysis = st.session_state.analyzer.analyze_stock(
-                        symbol, technical_signals, stock_data
-                    )
+                    analysis = st.session_state.analyzer.analyze_stock(symbol, technical_signals)
                     
                     # Store results
                     st.session_state.analysis_results[symbol] = {
@@ -385,6 +418,8 @@ def main():
                 except Exception as e:
                     st.error(f"Error analyzing {symbol}: {str(e)}")
                     continue
+            
+            st.success("Analysis complete! ✅")
     
     # Main content
     if st.session_state.analysis_results:
@@ -396,21 +431,21 @@ def display_welcome():
     """Display welcome message"""
     st.markdown("""
     <div style='text-align: center; padding: 2rem;'>
-        <h2>Welcome to the Stock Analysis Dashboard! 📊</h2>
+        <h2>Welcome to the AI Stock Analysis Dashboard! 🎯</h2>
         <p>Get <strong>AI-powered stock analysis</strong> with technical indicators and portfolio optimization.</p>
         
         <div style='display: inline-block; text-align: left; margin: 2rem 0;'>
-            <h4>🎯 Features:</h4>
+            <h4>🚀 Features:</h4>
             <ul>
-                <li>Real-time stock data from Yahoo Finance</li>
-                <li>Technical analysis (RSI, MACD, Bollinger Bands)</li>
-                <li>Risk assessment and return potential</li>
-                <li>Portfolio optimization suggestions</li>
-                <li>Interactive charts and visualizations</li>
+                <li>📊 <strong>Real-time data</strong> from Yahoo Finance</li>
+                <li>🔍 <strong>Technical analysis</strong> (RSI, MACD, Bollinger Bands)</li>
+                <li>📈 <strong>Risk assessment</strong> and return potential</li>
+                <li>💼 <strong>Portfolio optimization</strong> suggestions</li>
+                <li>📱 <strong>Interactive charts</strong> and visualizations</li>
             </ul>
         </div>
         
-        <p><strong>How to use:</strong></p>
+        <p><strong>🎯 How to use:</strong></p>
         <ol style='display: inline-block; text-align: left;'>
             <li>Enter stock symbols in the sidebar (comma separated)</li>
             <li>Select analysis period</li>
@@ -419,7 +454,7 @@ def display_welcome():
         </ol>
         
         <br>
-        <p><em>Try analyzing: AAPL, MSFT, GOOG, TSLA, AMZN, NFLX</em></p>
+        <p><em>💡 Try analyzing: AAPL, MSFT, GOOGL, TSLA, AMZN, NFLX</em></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -440,7 +475,8 @@ def display_results(analysis_results, symbols):
                                            key=lambda x: x[1], reverse=True):
                     st.metric(
                         label=symbol,
-                        value=f"{weight:.1f}%"
+                        value=f"{weight:.1f}%",
+                        help=f"Recommended portfolio allocation for {symbol}"
                     )
             
             with col2:
@@ -449,17 +485,18 @@ def display_results(analysis_results, symbols):
                     fig = go.Figure(data=[go.Pie(
                         labels=list(portfolio_weights.keys()),
                         values=list(portfolio_weights.values()),
-                        hole=.3
+                        hole=.3,
+                        textinfo='label+percent'
                     )])
                     fig.update_layout(
                         title="Portfolio Allocation",
                         height=300,
-                        showlegend=True
+                        showlegend=False
                     )
                     st.plotly_chart(fig, use_container_width=True)
     
     # Individual Stock Analysis
-    st.header("🔍 Stock Analysis")
+    st.header("🔍 Individual Stock Analysis")
     
     for symbol in symbols:
         if symbol not in analysis_results:
@@ -470,34 +507,50 @@ def display_results(analysis_results, symbols):
         analysis = data['analysis']
         
         with st.container():
-            col1, col2 = st.columns([1, 2])
+            st.markdown(f"### {symbol}")
+            
+            # Key metrics row
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.markdown(f"### {symbol}")
-                
-                # Price and change
                 price_change = technical.get('price_change', 0)
-                change_color = "positive" if price_change >= 0 else "negative"
-                
+                delta_color = "normal" if price_change >= 0 else "inverse"
                 st.metric(
-                    label="Current Price",
-                    value=f"${technical['current_price']:.2f}",
-                    delta=f"{price_change:+.2f}%"
+                    "Current Price",
+                    f"${technical['current_price']:.2f}",
+                    f"{price_change:+.2f}%",
+                    delta_color=delta_color
                 )
-                
-                # Key metrics
-                st.metric("RSI", f"{technical['rsi']:.1f}", technical['rsi_signal'])
-                st.metric("Trend", technical['trend'])
-                st.metric("Volatility", f"{technical['volatility']:.1%}")
-                
+            
             with col2:
-                # Charts
+                rsi_color = "inverse" if technical['rsi_signal'] == 'OVERSOLD' else "off" if technical['rsi_signal'] == 'OVERBOUGHT' else "normal"
+                st.metric(
+                    "RSI",
+                    f"{technical['rsi']:.1f}",
+                    technical['rsi_signal'],
+                    delta_color=rsi_color
+                )
+            
+            with col3:
+                st.metric("Trend", technical['trend'])
+            
+            with col4:
+                st.metric("Volatility", f"{technical['volatility']:.1%}")
+            
+            # Charts
+            col_chart1, col_chart2 = st.columns(2)
+            
+            with col_chart1:
                 price_chart = create_price_chart(data['df_with_indicators'], symbol)
                 st.plotly_chart(price_chart, use_container_width=True)
-                
-                # Analysis
-                st.subheader("Analysis & Recommendation")
-                st.markdown(analysis['analysis'])
+            
+            with col_chart2:
+                tech_chart = create_technical_chart(data['df_with_indicators'], symbol)
+                st.plotly_chart(tech_chart, use_container_width=True)
+            
+            # AI Analysis
+            st.subheader("🤖 AI Analysis & Recommendation")
+            st.markdown(analysis['analysis'])
             
             st.markdown("---")
 
