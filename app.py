@@ -9,7 +9,7 @@ import json
 
 # Page config
 st.set_page_config(
-    page_title="AI Stock Analysis Dashboard",
+    page_title="AI Stock Dashboard: Maximize Risk-Adjusted Returns",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -27,22 +27,22 @@ st.markdown("""
 
 # === Alpha Vantage Data Fetching ===
 @st.cache_data(ttl=3600)
-def fetch_alpha_vantage_data(symbol, outputsize="full"):
+def fetch_price_data(symbol):
     try:
         api_key = st.secrets["ALPHA_VANTAGE_API_KEY"]
     except KeyError:
         st.error("❌ Missing ALPHA_VANTAGE_API_KEY in secrets.")
         return None
 
-    ts = "https://www.alphavantage.co/query"
+    url = "https://www.alphavantage.co/query"
     params = {
         "function": "TIME_SERIES_DAILY",
         "symbol": symbol,
-        "outputsize": outputsize,
+        "outputsize": "full",
         "apikey": api_key
     }
     try:
-        resp = requests.get(ts, params=params, timeout=10)
+        resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
         if "Time Series (Daily)" not in data:
             return None
@@ -59,7 +59,7 @@ def fetch_alpha_vantage_data(symbol, outputsize="full"):
         df.sort_index(inplace=True)
         return df
     except Exception as e:
-        st.error(f"Alpha Vantage error: {e}")
+        st.error(f"Alpha Vantage price error: {e}")
         return None
 
 @st.cache_data(ttl=7200)
@@ -70,8 +70,8 @@ def fetch_fundamentals(symbol):
         params = {"function": "OVERVIEW", "symbol": symbol, "apikey": api_key}
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        if "Symbol" not in data:
-            return None
+        if "Symbol" not in 
+            return {}
         return {
             "pe": float(data.get("PERatio", 0) or 0),
             "eps": float(data.get("EPS", 0) or 0),
@@ -80,7 +80,7 @@ def fetch_fundamentals(symbol):
             "name": data.get("Name", symbol)
         }
     except:
-        return None
+        return {}
 
 @st.cache_data(ttl=7200)
 def fetch_news_sentiment(symbol):
@@ -104,65 +104,7 @@ def fetch_news_sentiment(symbol):
     except:
         return {"summary": "News unavailable.", "sentiment": "Neutral", "score": 0.0}
 
-# === DeepSeek AI Analysis ===
-def deepseek_analysis(symbol, technical, fundamentals, news, risk_score, return_potential):
-    try:
-        api_key = st.secrets["DEEPSEEK_API_KEY"]
-    except KeyError:
-        return "⚠️ DeepSeek API key missing. Using rule-based fallback."
-
-    prompt = f"""
-You are a Chief Investment Officer at a quantitative hedge fund.
-Your goal: **Maximize risk-adjusted returns** (Sharpe ratio) for {symbol}.
-
-**Input Data:**
-- Current Price: ${technical['current_price']:.2f} ({technical['price_change']:+.2f}%)
-- Technicals: RSI={technical['rsi']:.1f} ({technical['rsi_signal']}), Trend={technical['trend']}, MACD={technical['macd_signal']}
-- Volatility: {technical['volatility']:.1%} → Risk Score: {risk_score:.1f}/10
-- Fundamentals: P/E={fundamentals.get('pe', 'N/A')}, EPS=${fundamentals.get('eps', 'N/A')}, Sector={fundamentals.get('sector', 'N/A')}
-- News Sentiment: {news['sentiment']} (score: {news['score']:.2f})
-- Return Potential: {return_potential:.1f}%
-
-**Task:**
-1. Synthesize insights from technical, fundamental, and sentiment data.
-2. Assess whether this stock offers **high risk-adjusted return potential**.
-3. Recommend allocation % (0–15%) for a diversified portfolio.
-4. Output ONLY in this JSON format:
-{{
-  "reasoning": "2-3 sentence synthesis",
-  "risk_adjusted_outlook": "High/Medium/Low",
-  "recommended_allocation_percent": X.X
-}}
-"""
-    try:
-        response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "deepseek-coder",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 300
-            },
-            timeout=15
-        )
-        if response.status_code == 200:
-            content = response.json()["choices"][0]["message"]["content"]
-            # Extract JSON
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if start != -1 and end != -1:
-                json_str = content[start:end]
-                result = json.loads(json_str)
-                return result
-        return {"reasoning": "DeepSeek analysis failed. Using fallback.", "risk_adjusted_outlook": "Medium", "recommended_allocation_percent": 5.0}
-    except Exception as e:
-        return {"reasoning": f"DeepSeek error: {str(e)[:100]}", "risk_adjusted_outlook": "Medium", "recommended_allocation_percent": 5.0}
-
-# === Technical Indicators (same as before) ===
+# === Technical Indicators ===
 def calculate_rsi(prices, window=14):
     delta = prices.diff()
     gain = (delta.where(delta > 0, 0)).fillna(0)
@@ -203,15 +145,73 @@ def calculate_technical_indicators(df):
     }
     return signals, df
 
+# === DeepSeek AI Analysis ===
+def deepseek_analysis(symbol, technical, fundamentals, news, risk_score, return_potential):
+    try:
+        api_key = st.secrets["DEEPSEEK_API_KEY"]
+    except KeyError:
+        return {
+            "reasoning": "⚠️ DEEPSEEK_API_KEY missing in secrets. Add it to enable AI analysis.",
+            "risk_adjusted_outlook": "Medium",
+            "recommended_allocation_percent": 5.0
+        }
+
+    prompt = f"""
+You are a Chief Investment Officer optimizing for **maximum risk-adjusted returns** (Sharpe ratio).
+Analyze {symbol} using the following inputs:
+
+- Price: ${technical['current_price']:.2f} ({technical['price_change']:+.2f}%)
+- Technicals: RSI={technical['rsi']:.1f} ({technical['rsi_signal']}), Trend={technical['trend']}, MACD={technical['macd_signal']}
+- Volatility: {technical['volatility']:.1%} → Risk Score: {risk_score:.1f}/10
+- Fundamentals: P/E={fundamentals.get('pe', 'N/A')}, EPS=${fundamentals.get('eps', 'N/A')}, Sector={fundamentals.get('sector', 'N/A')}
+- News Sentiment: {news['sentiment']} (score: {news['score']:.2f})
+- Return Potential: {return_potential:.1f}%
+
+Provide a concise 2-3 sentence synthesis and recommend an allocation % (0–15%) for a diversified portfolio.
+Output ONLY valid JSON with keys: "reasoning", "risk_adjusted_outlook" ("High"/"Medium"/"Low"), "recommended_allocation_percent" (number).
+"""
+
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 300,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=20
+            )
+            if response.status_code == 200:
+                content = response.json()["choices"][0]["message"]["content"]
+                result = json.loads(content)
+                if all(k in result for k in ["reasoning", "risk_adjusted_outlook", "recommended_allocation_percent"]):
+                    result["recommended_allocation_percent"] = float(result["recommended_allocation_percent"])
+                    return result
+            time.sleep(2)
+        except Exception as e:
+            time.sleep(2)
+    return {
+        "reasoning": "❌ DeepSeek AI failed after retries. Check API key or network.",
+        "risk_adjusted_outlook": "Medium",
+        "recommended_allocation_percent": 5.0
+    }
+
 # === Charts ===
 def create_price_chart(df, symbol):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
                         subplot_titles=(f'{symbol} Price', 'Volume'), row_heights=[0.7, 0.3])
     fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close', line=dict(color='#1f77b4')), row=1, col=1)
-    if 'sma_20' in df.columns:
+    if 'sma_20' in df.columns and not df['sma_20'].isna().all():
         fig.add_trace(go.Scatter(x=df.index, y=df['sma_20'], name='SMA 20', line=dict(dash='dash', color='orange')), row=1, col=1)
     colors = ['green' if o <= c else 'red' for o, c in zip(df['Open'], df['Close'])]
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, opacity=0.6, showlegend=False), row=2, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, opacity=0.6), row=2, col=1)
     fig.update_layout(height=400, template="plotly_white", margin=dict(t=50, l=0, r=0, b=0))
     return fig
 
@@ -230,34 +230,34 @@ def main():
 
     if st.sidebar.button("🚀 Analyze with DeepSeek AI", type="primary"):
         if not symbols:
-            st.warning("Enter at least one symbol.")
+            st.warning("Enter at least one stock symbol.")
             return
 
         results = {}
         progress = st.progress(0)
         for i, sym in enumerate(symbols):
             st.write(f"🔍 Analyzing {sym}...")
-            df = fetch_alpha_vantage_data(sym)
+            df = fetch_price_data(sym)
             if df is None or len(df) < 20:
-                st.error(f"No data for {sym}")
+                st.error(f"No price data for {sym}")
                 continue
 
-            # Slice period
-            days = {"1mo":21, "3mo":63, "6mo":126, "1y":252}[period]
-            df = df.tail(days)
+            # Slice to period
+            days_map = {"1mo":21, "3mo":63, "6mo":126, "1y":252}
+            df = df.tail(days_map[period])
             tech_signals, df_ind = calculate_technical_indicators(df)
-            fundamentals = fetch_fundamentals(sym) or {}
+            fundamentals = fetch_fundamentals(sym)
             news = fetch_news_sentiment(sym)
 
-            # Risk & return (Sharpe-like)
+            # Risk & return scoring
             risk = min(tech_signals['volatility'] * 15, 10)
             trend_score = 1 if tech_signals['trend'] == 'BULLISH' else -1 if tech_signals['trend'] == 'BEARISH' else 0
             rsi_score = 0.8 if tech_signals['rsi_signal'] == 'OVERSOLD' else -0.2 if tech_signals['rsi_signal'] == 'OVERBOUGHT' else 0.5
             macd_score = 0.3 if tech_signals['macd_signal'] == 'BULLISH' else -0.3
-            raw_return = (trend_score + rsi_score + macd_score) * 20  # max ~30%
+            raw_return = (trend_score + rsi_score + macd_score) * 20
             return_potential = max(min(raw_return, 30), -10)
 
-            # DeepSeek AI Analysis
+            # DeepSeek AI
             ai_result = deepseek_analysis(sym, tech_signals, fundamentals, news, risk, return_potential)
 
             results[sym] = {
@@ -269,6 +269,7 @@ def main():
                 'return_potential': return_potential,
                 'ai': ai_result
             }
+
             progress.progress((i+1)/len(symbols))
             if (i+1) % 4 == 0 and i+1 < len(symbols):
                 time.sleep(15)  # Respect Alpha Vantage rate limits
@@ -289,7 +290,6 @@ def main():
                 col4.metric("Allocation", f"{data['ai'].get('recommended_allocation_percent', 0):.1f}%")
 
                 st.plotly_chart(create_price_chart(data['df'], sym), use_container_width=True)
-
                 st.markdown(f"**🧠 DeepSeek AI Reasoning:** {data['ai'].get('reasoning', 'N/A')}")
                 st.markdown("---")
     else:
