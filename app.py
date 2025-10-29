@@ -19,7 +19,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# === Alpha Vantage Data ===
+# === Alpha Vantage Data Fetching ===
 @st.cache_data(ttl=3600)
 def fetch_price_data(symbol):
     try:
@@ -29,24 +29,43 @@ def fetch_price_data(symbol):
         return None
 
     url = "https://www.alphavantage.co/query"
-    params = {"function": "TIME_SERIES_DAILY", "symbol": symbol, "outputsize": "full", "apikey": api_key}
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        if "Time Series (Daily)" not in data:
-            st.warning(f"No price data for {symbol}")
-            return None
-        df = pd.DataFrame(data["Time Series (Daily)"]).T
-        df.index = pd.to_datetime(df.index)
-        df = df.astype(float)
-        df.rename(columns={
-            "1. open": "Open", "2. high": "High", "3. low": "Low", "4. close": "Close", "5. volume": "Volume"
-        }, inplace=True)
-        df.sort_index(inplace=True)
-        return df
-    except Exception as e:
-        st.error(f"Price data error for {symbol}: {e}")
-        return None
+    params = {
+        "function": "TIME_SERIES_DAILY",
+        "symbol": symbol,
+        "outputsize": "full",
+        "apikey": api_key
+    }
+
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            data = resp.json()
+
+            if "Error Message" in data:
+                st.warning(f"Alpha Vantage error for {symbol}: {data['Error Message']}")
+                return None
+
+            if "Time Series (Daily)" not in data:
+                st.warning(f"No price data for {symbol} (attempt {attempt+1})")
+                time.sleep(2)
+                continue
+
+            df = pd.DataFrame(data["Time Series (Daily)"]).T
+            df.index = pd.to_datetime(df.index)
+            df = df.astype(float)
+            df.rename(columns={
+                "1. open": "Open", "2. high": "High", "3. low": "Low",
+                "4. close": "Close", "5. volume": "Volume"
+            }, inplace=True)
+            df.sort_index(inplace=True)
+            return df
+
+        except Exception as e:
+            st.warning(f"Attempt {attempt+1} failed for {symbol}: {str(e)[:80]}")
+            time.sleep(2)
+
+    st.error(f"❌ Failed to fetch data for {symbol} after 3 attempts.")
+    return None
 
 @st.cache_data(ttl=7200)
 def fetch_fundamentals(symbol):
@@ -56,7 +75,7 @@ def fetch_fundamentals(symbol):
         params = {"function": "OVERVIEW", "symbol": symbol, "apikey": api_key}
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        if "Symbol" not in data:
+        if "Symbol" not in 
             return {}
         return {
             "pe": float(data.get("PERatio", 0) or 0),
@@ -125,44 +144,29 @@ def calculate_technical_indicators(df):
 
 # === Rule-Based Multi-Agent Analysis (Inspired by TradingAgents) ===
 def rule_based_analysis(symbol, technical, fundamentals, news, risk_score, return_potential):
-    # Technical Analyst Score (-10 to +10)
+    # Technical Analyst
     tech_score = 0
-    if technical['trend'] == 'BULLISH':
-        tech_score += 4
-    elif technical['trend'] == 'BEARISH':
-        tech_score -= 4
-    if technical['rsi_signal'] == 'OVERSOLD':
-        tech_score += 3
-    elif technical['rsi_signal'] == 'OVERBOUGHT':
-        tech_score -= 2
-    if technical['macd_signal'] == 'BULLISH':
-        tech_score += 3
-    elif technical['macd_signal'] == 'BEARISH':
-        tech_score -= 3
+    if technical['trend'] == 'BULLISH': tech_score += 4
+    elif technical['trend'] == 'BEARISH': tech_score -= 4
+    if technical['rsi_signal'] == 'OVERSOLD': tech_score += 3
+    elif technical['rsi_signal'] == 'OVERBOUGHT': tech_score -= 2
+    if technical['macd_signal'] == 'BULLISH': tech_score += 3
+    elif technical['macd_signal'] == 'BEARISH': tech_score -= 3
 
-    # Fundamental Analyst Score (-5 to +5)
+    # Fundamental Analyst
     fund_score = 0
     pe = fundamentals.get('pe', 0)
     if pe > 0:
-        if pe < 15:
-            fund_score += 3  # Undervalued
-        elif pe < 25:
-            fund_score += 1
-        elif pe > 40:
-            fund_score -= 2  # Overvalued
+        if pe < 15: fund_score += 3
+        elif pe < 25: fund_score += 1
+        elif pe > 40: fund_score -= 2
 
-    # Sentiment Analyst Score (-3 to +3)
-    sent_score = 0
-    if news['sentiment'] == 'Bullish':
-        sent_score += 2
-    elif news['sentiment'] == 'Bearish':
-        sent_score -= 2
+    # Sentiment Analyst
+    sent_score = 2 if news['sentiment'] == 'Bullish' else -2 if news['sentiment'] == 'Bearish' else 0
 
-    # Total composite score
     total_score = tech_score + fund_score + sent_score
-    risk_adjusted_score = total_score - (risk_score - 5)  # Penalize high risk
+    risk_adjusted_score = total_score - max(0, risk_score - 5)
 
-    # Determine outlook
     if risk_adjusted_score >= 6:
         outlook = "High"
         allocation = min(15.0, max(8.0, risk_adjusted_score * 1.2))
@@ -173,20 +177,12 @@ def rule_based_analysis(symbol, technical, fundamentals, news, risk_score, retur
         outlook = "Low"
         allocation = max(0.0, min(3.0, risk_adjusted_score + 3))
 
-    # Build reasoning
     reasons = []
-    if tech_score > 0:
-        reasons.append(f"Technical strength ({tech_score:+.0f})")
-    elif tech_score < 0:
-        reasons.append(f"Technical weakness ({tech_score:+.0f})")
-    if fund_score != 0:
-        reasons.append(f"Fundamental {'support' if fund_score > 0 else 'concern'} (P/E={pe:.1f})")
-    if sent_score != 0:
-        reasons.append(f"Sentiment is {news['sentiment'].lower()}")
-
-    reasoning = "; ".join(reasons) if reasons else "Balanced signals across agents."
-    if risk_score > 7:
-        reasoning += f" ⚠️ High volatility (risk={risk_score:.1f}/10)."
+    if tech_score != 0: reasons.append(f"Technical {'strength' if tech_score > 0 else 'weakness'} ({tech_score:+.0f})")
+    if fund_score != 0: reasons.append(f"Fundamental {'support' if fund_score > 0 else 'concern'} (P/E={pe:.1f})")
+    if sent_score != 0: reasons.append(f"Sentiment is {news['sentiment'].lower()}")
+    reasoning = "; ".join(reasons) if reasons else "Balanced signals."
+    if risk_score > 7: reasoning += f" ⚠️ High volatility (risk={risk_score:.1f}/10)."
 
     return {
         "reasoning": reasoning,
@@ -214,7 +210,7 @@ def main():
         st.session_state.results = {}
 
     st.sidebar.header("Configuration")
-    symbols_input = st.sidebar.text_area("Stock Symbols", "AAPL, MSFT, GOOGL", height=100)
+    symbols_input = st.sidebar.text_area("Stock Symbols", "AAPL, MSFT, GOOGL, TSLA", height=100)
     period = st.sidebar.selectbox("Period", ["1mo", "3mo", "6mo", "1y"], index=2)
     symbols = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
 
@@ -225,14 +221,17 @@ def main():
 
         results = {}
         progress = st.progress(0)
+        total = len(symbols)
+
         for i, sym in enumerate(symbols):
             st.write(f"🔍 Analyzing {sym}...")
             df = fetch_price_data(sym)
             if df is None or len(df) < 20:
-                st.error(f"No data for {sym}")
+                st.error(f"Skipping {sym} due to missing data.")
+                progress.progress((i + 1) / total)
                 continue
 
-            days_map = {"1mo":21, "3mo":63, "6mo":126, "1y":252}
+            days_map = {"1mo": 21, "3mo": 63, "6mo": 126, "1y": 252}
             df = df.tail(days_map[period])
             tech_signals, df_ind = calculate_technical_indicators(df)
             fundamentals = fetch_fundamentals(sym)
@@ -253,9 +252,13 @@ def main():
                 'df': df_ind,
                 'ai': ai_result
             }
-            progress.progress((i+1)/len(symbols))
-            if (i+1) % 4 == 0 and i+1 < len(symbols):
-                time.sleep(15)  # Respect Alpha Vantage rate limits
+
+            progress.progress((i + 1) / total)
+
+            # ⏱ Respect Alpha Vantage rate limit: max 5 req/min
+            if (i + 1) % 5 == 0 and (i + 1) < total:
+                st.info("⏸ Pausing 15 seconds to respect Alpha Vantage rate limits...")
+                time.sleep(15)
 
         st.session_state.results = results
         st.success("✅ Analysis complete with rule-based multi-agent system!")
