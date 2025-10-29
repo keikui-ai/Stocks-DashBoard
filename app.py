@@ -86,8 +86,8 @@ def fetch_fundamentals(symbol):
             "sector": data.get("Sector", "N/A"),
             "name": data.get("Name", symbol)
             }
-        except Exception as e:
-            st.warning(f"Error fetching fundamentals for {symbol}: {e}")
+    except Exception as e:
+        st.warning(f"Error fetching fundamentals for {symbol}: {e}")
         return {}
 
 @st.cache_data(ttl=7200)
