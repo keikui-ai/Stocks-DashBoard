@@ -76,15 +76,16 @@ def fetch_fundamentals(symbol):
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
         
-        if "symbol" not in data:
+        if "Symbol" not in data:
             st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
         return {
+            "name": data.get("Name", symbol),
+            "sector": data.get("Sector", "N/A"),
             "pe": float(data.get("PERatio", 0) or 0),
             "eps": float(data.get("EPS", 0) or 0),
             "market_cap": data.get("MarketCapitalization", "N/A"),
-            "sector": data.get("Sector", "N/A"),
-            "name": data.get("Name", symbol)
+            "dividendyield": float(data.get("DividendYield", "N/A"))
             }
     except Exception as e:
         st.warning(f"Error fetching fundamentals for {symbol}: {e}")
