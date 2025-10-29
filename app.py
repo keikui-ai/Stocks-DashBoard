@@ -76,7 +76,7 @@ def fetch_fundamentals(symbol):
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
 
-        if "Symbol" not in 
+        if "Symbol" not in data:
             st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
 
