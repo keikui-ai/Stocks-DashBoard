@@ -75,18 +75,34 @@ def fetch_fundamentals(symbol):
         params = {"function": "OVERVIEW", "symbol": symbol, "apikey": api_key}
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        
+
+        # Check if API returned valid data
         if "Symbol" not in data:
             st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
-        return {
+
+        def safe_float(val, default=0.0):
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+
+        # Build fundamentals dict safely
+        fundamentals = {
             "name": data.get("Name", symbol),
             "sector": data.get("Sector", "N/A"),
-            "pe": float(data.get("PERatio", 0) or 0),
-            "eps": float(data.get("EPS", 0) or 0),
+            "pe": safe_float(data.get("PERatio")),
+            "eps": safe_float(data.get("EPS")),
             "market_cap": data.get("MarketCapitalization", "N/A"),
-            "dividendyield": float(data.get("DividendYield", "N/A"))
-            }
+            "dividendyield": safe_float(data.get("DividendYield"))
+        }
+
+        # If all key metrics are 0 or N/A, log as "partial data"
+        if fundamentals["pe"] == 0 and fundamentals["eps"] == 0 and fundamentals["market_cap"] == "N/A":
+            st.info(f"Partial fundamental data for {symbol} — using available fields only.")
+
+        return fundamentals
+
     except Exception as e:
         st.warning(f"Error fetching fundamentals for {symbol}: {e}")
         return {}
@@ -166,7 +182,9 @@ def rule_based_analysis(symbol, technical, fundamentals, news, risk_score, retur
         if pe < 15: fund_score += 3
         elif pe < 25: fund_score += 1
         elif pe > 40: fund_score -= 2
-
+    else:
+        st.info(f"No PE ratio available for {symbol} — skipping fundamental score.")
+    
     # Sentiment Analyst
     sent_score = 2 if news['sentiment'] == 'Bullish' else -2 if news['sentiment'] == 'Bearish' else 0
 
