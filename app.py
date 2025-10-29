@@ -81,9 +81,12 @@ def fetch_fundamentals(symbol):
             st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
 
-        def safe_float(val, default=0.0):
+        def safe_float(val, default="N/A"):
+            """Converts value to float safely, returns default if conversion fails."""
             try:
-                return float(val) if val is not None else default
+                if val is None or val == "" or val == "None":
+                    return default
+                return float(val)
             except (ValueError, TypeError):
                 return default
 
@@ -97,8 +100,8 @@ def fetch_fundamentals(symbol):
             "dividendyield": safe_float(data.get("DividendYield"))
         }
 
-        # If all key metrics are 0 or N/A, log as "partial data"
-        if fundamentals["pe"] == 0 and fundamentals["eps"] == 0 and fundamentals["market_cap"] == "N/A":
+        # Log if key data is missing
+        if fundamentals["pe"] == "N/A" or fundamentals["eps"] == "N/A":
             st.info(f"Partial fundamental data for {symbol} — using available fields only.")
 
         return fundamentals
@@ -300,6 +303,22 @@ def main():
             st.plotly_chart(create_price_chart(data['df'], sym), use_container_width=True)
             st.markdown(f"**🧠 Multi-Agent Reasoning:** {data['ai']['reasoning']}")
             st.markdown("---")
+
+    # Display Fundamentals Section
+            st.subheader("📊 Fundamental Data")
+            col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+            col_f1.metric("Company", fundamentals.get("name", "N/A"))
+            col_f2.metric("Sector", fundamentals.get("sector", "N/A"))
+            col_f3.metric("P/E Ratio", fundamentals.get("pe", "N/A"))
+            col_f4.metric("EPS", fundamentals.get("eps", "N/A"))
+            col_f5.metric("Market Cap", fundamentals.get("market_cap", "N/A"))
+
+    # Add Dividend Yield if available
+            if fundamentals.get("dividendyield") != "N/A":
+                st.metric("Dividend Yield", f"{fundamentals['dividendyield']:.2%}")
+            else:
+                st.metric("Dividend Yield", "N/A")
+            
     else:
         st.info("Enter stock symbols and click **Analyze** to begin.")
 
