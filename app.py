@@ -45,7 +45,7 @@ def fetch_price_data(symbol):
                 st.warning(f"Alpha Vantage error for {symbol}: {data['Error Message']}")
                 return None
 
-            if "Time Series (Daily)" not in data:
+            if "Time Series (Daily)" not in 
                 st.warning(f"No price data for {symbol} (attempt {attempt+1})")
                 time.sleep(2)
                 continue
@@ -76,13 +76,11 @@ def fetch_fundamentals(symbol):
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
 
-        # Check if API returned valid data
-        if "Symbol" not in data:
+        if "Symbol" not in 
             st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
 
         def safe_float(val, default="N/A"):
-            """Converts value to float safely, returns default if conversion fails."""
             try:
                 if val is None or val == "" or val == "None":
                     return default
@@ -90,8 +88,7 @@ def fetch_fundamentals(symbol):
             except (ValueError, TypeError):
                 return default
 
-        # Build fundamentals dict safely
-        fundamentals = {
+        return {
             "name": data.get("Name", symbol),
             "sector": data.get("Sector", "N/A"),
             "pe": safe_float(data.get("PERatio")),
@@ -99,13 +96,6 @@ def fetch_fundamentals(symbol):
             "market_cap": data.get("MarketCapitalization", "N/A"),
             "dividendyield": safe_float(data.get("DividendYield"))
         }
-
-        # Log if key data is missing
-        if fundamentals["pe"] == "N/A" or fundamentals["eps"] == "N/A":
-            st.info(f"Partial fundamental data for {symbol} — using available fields only.")
-
-        return fundamentals
-
     except Exception as e:
         st.warning(f"Error fetching fundamentals for {symbol}: {e}")
         return {}
@@ -180,14 +170,12 @@ def rule_based_analysis(symbol, technical, fundamentals, news, risk_score, retur
 
     # Fundamental Analyst
     fund_score = 0
-    pe = fundamentals.get('pe', 0)
-    if pe > 0:
+    pe = fundamentals.get('pe', "N/A")
+    if isinstance(pe, float) and pe > 0:
         if pe < 15: fund_score += 3
         elif pe < 25: fund_score += 1
         elif pe > 40: fund_score -= 2
-    else:
-        st.info(f"No PE ratio available for {symbol} — skipping fundamental score.")
-    
+
     # Sentiment Analyst
     sent_score = 2 if news['sentiment'] == 'Bullish' else -2 if news['sentiment'] == 'Bearish' else 0
 
@@ -206,7 +194,7 @@ def rule_based_analysis(symbol, technical, fundamentals, news, risk_score, retur
 
     reasons = []
     if tech_score != 0: reasons.append(f"Technical {'strength' if tech_score > 0 else 'weakness'} ({tech_score:+.0f})")
-    if fund_score != 0: reasons.append(f"Fundamental {'support' if fund_score > 0 else 'concern'} (P/E={pe:.1f})")
+    if fund_score != 0: reasons.append(f"Fundamental support (P/E={pe:.1f})")
     if sent_score != 0: reasons.append(f"Sentiment is {news['sentiment'].lower()}")
     reasoning = "; ".join(reasons) if reasons else "Balanced signals."
     if risk_score > 7: reasoning += f" ⚠️ High volatility (risk={risk_score:.1f}/10)."
@@ -299,22 +287,25 @@ def main():
             col2.metric("RSI", f"{data['tech']['rsi']:.1f}", data['tech']['rsi_signal'])
             col3.metric("Volatility", f"{data['tech']['volatility']:.1%}")
             col4.metric("Allocation", f"{data['ai']['recommended_allocation_percent']:.1f}%")
-    # Display Fundamentals Section
+
+            st.plotly_chart(create_price_chart(data['df'], sym), use_container_width=True)
+
+            # === Display Fundamental Data ===
+            st.subheader("📊 Fundamental Data")
+            fund = data['fundamentals']
             col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
-            col_f1.metric("Company", fundamentals.get("name", "N/A"))
-            col_f2.metric("Sector", fundamentals.get("sector", "N/A"))
-            col_f3.metric("P/E Ratio", fundamentals.get("pe", "N/A"))
-            col_f4.metric("EPS", fundamentals.get("eps", "N/A"))
-            col_f5.metric("Market Cap", fundamentals.get("market_cap", "N/A"))
-    # Add Dividend Yield if available
-            if fundamentals.get("dividendyield") != "N/A":
-                st.metric("Dividend Yield", f"{fundamentals['dividendyield']:.2%}")
+            col_f1.metric("Company", fund.get("name", "N/A"))
+            col_f2.metric("Sector", fund.get("sector", "N/A"))
+            col_f3.metric("P/E Ratio", fund.get("pe", "N/A"))
+            col_f4.metric("EPS", fund.get("eps", "N/A"))
+            col_f5.metric("Market Cap", fund.get("market_cap", "N/A"))
+            if fund.get("dividendyield") != "N/A":
+                st.metric("Dividend Yield", f"{fund['dividendyield']:.2%}")
             else:
                 st.metric("Dividend Yield", "N/A")
-            
-            st.plotly_chart(create_price_chart(data['df'], sym), use_container_width=True)
+
             st.markdown(f"**🧠 Multi-Agent Reasoning:** {data['ai']['reasoning']}")
-            st.markdown("---")                 
+            st.markdown("---")
     else:
         st.info("Enter stock symbols and click **Analyze** to begin.")
 
