@@ -45,7 +45,7 @@ def fetch_price_data(symbol):
                 st.warning(f"Alpha Vantage error for {symbol}: {data['Error Message']}")
                 return None
 
-            if "Time Series (Daily)" not in 
+            if "Time Series (Daily)" not in data:
                 st.warning(f"No price data for {symbol} (attempt {attempt+1})")
                 time.sleep(2)
                 continue
