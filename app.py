@@ -75,7 +75,7 @@ def fetch_fundamentals(symbol):
         params = {"function": "OVERVIEW", "symbol": symbol, "apikey": api_key}
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        if "Symbol" not in 
+        if "Symbol" not in data
             return {}
         return {
             "pe": float(data.get("PERatio", 0) or 0),
