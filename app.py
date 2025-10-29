@@ -76,8 +76,8 @@ def fetch_fundamentals(symbol):
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
         
-        if "Symbol" not in data:
-        st.warning(f"Fundamental data unavailable for {symbol}")
+        if "symbol" not in data:
+            st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
         return {
             "pe": float(data.get("PERatio", 0) or 0),
@@ -87,7 +87,7 @@ def fetch_fundamentals(symbol):
             "name": data.get("Name", symbol)
             }
         except Exception as e:
-        st.warning(f"Error fetching fundamentals for {symbol}: {e}")
+            st.warning(f"Error fetching fundamentals for {symbol}: {e}")
         return {}
 
 @st.cache_data(ttl=7200)
