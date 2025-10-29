@@ -75,6 +75,7 @@ def fetch_fundamentals(symbol):
         params = {"function": "OVERVIEW", "symbol": symbol, "apikey": api_key}
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
+        
         if "Symbol" not in data:
         st.warning(f"Fundamental data unavailable for {symbol}")
             return {}
@@ -84,8 +85,8 @@ def fetch_fundamentals(symbol):
             "market_cap": data.get("MarketCapitalization", "N/A"),
             "sector": data.get("Sector", "N/A"),
             "name": data.get("Name", symbol)
-        }
-    except Exception as e:
+            }
+        except Exception as e:
         st.warning(f"Error fetching fundamentals for {symbol}: {e}")
         return {}
 
